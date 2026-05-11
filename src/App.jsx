@@ -69,38 +69,54 @@ function gerarEscala(eqs, dI, dF, hpT, fer, horaInicio, descansoMin) {
     tConf.push({ id: `T${t + 1}`, label: `Turno ${t + 1}`, horario: `${fH(h0)}–${fH(h1)}`, horas: hpT, horaInicio: h0 });
   }
 
-  const hSem = {}, tTot = {}, hTot = {}, nHot = {};
-  eqs.forEach(eq => { hSem[eq.id] = {}; tTot[eq.id] = 0; hTot[eq.id] = 0; nHot[eq.id] = 0; });
+  const hSem = {}, tTot = {}, hTot = {}, nHot = {}, ultDia = {};
+  eqs.forEach(eq => { 
+    hSem[eq.id] = {}; 
+    tTot[eq.id] = 0; 
+    hTot[eq.id] = 0; 
+    nHot[eq.id] = 0;
+    ultDia[eq.id] = null;
+  });
   
   const esc = {};
 
   // ── FUNÇÃO AUXILIAR: Score de balanceamento ─────────────────
-  // Quanto MENOR o score, melhor a equipe para o turno
-  function calcScore(eqId, turno) {
+  function calcScore(eqId, turno, diaAtual) {
     const h = hTot[eqId] || 0;
     const n = nHot[eqId] || 0;
     const noturnasTurno = calcHorasNoturnas(turno.horaInicio, turno.horas);
+    const ult = ultDia[eqId];
     
-    // 1. Diferença de horas totais vs equipe com menos horas
+    // 1. Diferença de horas totais (PESO 2x)
     const minH = Math.min(...eqs.map(e => hTot[e.id] || 0));
-    const diffH = h - minH;
+    const diffH = (h - minH) * 2;
     
-    // 2. Diferença de horas noturnas vs equipe com menos noturnas (PESO 3x)
+    // 2. Diferença de horas noturnas (PESO 4x - MAIOR PRIORIDADE)
     const minN = Math.min(...eqs.map(e => nHot[e.id] || 0));
-    const diffN = n - minN;
+    const diffN = (n - minN) * 4;
     
-    // 3. Se o turno for noturno, penaliza equipes que já têm muitas noturnas
-    const penalNoturna = noturnasTurno > 0 ? (n * 2.5) : 0;
+    // 3. Penalização FORTE para turnos noturnos em equipes já carregadas
+    const penalNoturna = noturnasTurno > 0 ? (n * 3.5) : 0;
     
-    // 4. Bônus para equipes abaixo da meta (incentiva distribuição)
+    // 4. Bônus para equipes abaixo da meta
     const faltaMeta = Math.max(0, metaH - h);
-    const bonusMeta = faltaMeta > 0 ? -faltaMeta * 0.3 : 0;
+    const bonusMeta = faltaMeta > 0 ? -faltaMeta * 0.5 : 0;
     
-    // Score final: quanto menor, melhor
-    return diffH + (diffN * 3) + penalNoturna + bonusMeta;
+    // 5. Penalização por uso recente (EVITA CONCENTRAÇÃO)
+    let penalRecencia = 0;
+    if (ult !== null) {
+      const diasDesdeUltimo = dD(pd(ult), diaAtual);
+      if (diasDesdeUltimo <= 1) penalRecencia = 50;
+      else if (diasDesdeUltimo <= 2) penalRecencia = 20;
+      else if (diasDesdeUltimo <= 3) penalRecencia = 5;
+    }
+    
+    // 6. Fator aleatório para quebrar empates
+    const randomFactor = (Math.random() - 0.5) * 2;
+    
+    return diffH + diffN + penalNoturna + bonusMeta + penalRecencia + randomFactor;
   }
 
-  // ── FUNÇÃO AUXILIAR: Verifica se equipe pode trabalhar ─────
   const pode = (eqId, dia, turno) => {
     const wk = iW(dia);
     if ((hSem[eqId][wk] || 0) + turno.horas > 36) return false;
@@ -109,23 +125,24 @@ function gerarEscala(eqs, dI, dF, hpT, fer, horaInicio, descansoMin) {
   };
 
   // ═══════════════════════════════════════════════════════════
-  // FASE 1: Distribuição inicial — cobertura + balanceamento
+  // FASE 1: Distribuição por TURNO (não por dia!)
+  // Para cada turno, distribui entre TODOS os dias
   // ═══════════════════════════════════════════════════════════
   
-  // Ordena dias: primeiro dias de semana sem cobertura, depois sábados, domingos
-  const diasPriorizados = [...diasVal].sort((a, b) => {
-    const da = a.getDay(), db = b.getDay();
-    const ka = fm(a), kb = fm(b);
-    const va = !(esc[ka] && esc[ka].length > 0) && da >= 1 && da <= 5 ? 0 : 1;
-    const vb = !(esc[kb] && esc[kb].length > 0) && db >= 1 && db <= 5 ? 0 : 1;
-    return va - vb;
-  });
-
-  diasPriorizados.forEach(dia => {
-    const dk = fm(dia);
-    esc[dk] = [];
+  diasVal.forEach(dia => { esc[fm(dia)] = []; });
+  
+  tConf.forEach(turno => {
+    // Dias de semana primeiro
+    const diasOrdenados = [...diasVal].sort((a, b) => {
+      const pa = (a.getDay() >= 1 && a.getDay() <= 5) ? 0 : 1;
+      const pb = (b.getDay() >= 1 && b.getDay() <= 5) ? 0 : 1;
+      return pa - pb;
+    });
     
-    tConf.forEach(turno => {
+    diasOrdenados.forEach(dia => {
+      const dk = fm(dia);
+      if (esc[dk].some(e => e.turno.id === turno.id)) return;
+      
       const disponiveis = eqs.filter(eq => {
         if (esc[dk].some(e => e.equipeId === eq.id)) return false;
         return pode(eq.id, dia, turno);
@@ -133,9 +150,7 @@ function gerarEscala(eqs, dI, dF, hpT, fer, horaInicio, descansoMin) {
       
       if (disponiveis.length === 0) return;
       
-      // Ordena por score (menor score = melhor balanceamento)
-      disponiveis.sort((a, b) => calcScore(a.id, turno) - calcScore(b.id, turno));
-      
+      disponiveis.sort((a, b) => calcScore(a.id, turno, dia) - calcScore(b.id, turno, dia));
       const escolhida = disponiveis[0];
       
       esc[dk].push({ equipeId: escolhida.id, turno: { ...turno } });
@@ -144,31 +159,25 @@ function gerarEscala(eqs, dI, dF, hpT, fer, horaInicio, descansoMin) {
       tTot[escolhida.id]++;
       hTot[escolhida.id] += turno.horas;
       nHot[escolhida.id] += calcHorasNoturnas(turno.horaInicio, turno.horas);
+      ultDia[escolhida.id] = dk;
     });
   });
 
   // ═══════════════════════════════════════════════════════════
-  // FASE 2: Backfill — preenche dias completamente vazios
+  // FASE 2: Backfill — preenche dias vazios
   // ═══════════════════════════════════════════════════════════
   
-  const diasVazios = diasVal.filter(d => {
-    const dk = fm(d);
-    return !(esc[dk] && esc[dk].length > 0);
-  });
+  const diasVazios = diasVal.filter(d => !(esc[fm(d)] && esc[fm(d)].length > 0));
   
   diasVazios.forEach(dia => {
     const dk = fm(dia);
-    if (!esc[dk]) esc[dk] = [];
-    
     for (const turno of tConf) {
       const disponiveis = eqs.filter(eq => {
         if (esc[dk].some(e => e.equipeId === eq.id)) return false;
         return pode(eq.id, dia, turno);
       });
-      
       if (disponiveis.length === 0) continue;
       
-      // Ordena: menos horas totais, depois menos noturnas
       disponiveis.sort((a, b) => {
         const diffH = (hTot[a.id] || 0) - (hTot[b.id] || 0);
         if (Math.abs(diffH) >= hpT) return diffH;
@@ -178,125 +187,80 @@ function gerarEscala(eqs, dI, dF, hpT, fer, horaInicio, descansoMin) {
       });
       
       const escolhida = disponiveis[0];
-      
       esc[dk].push({ equipeId: escolhida.id, turno: { ...turno } });
       const wk = iW(dia);
       hSem[escolhida.id][wk] = (hSem[escolhida.id][wk] || 0) + turno.horas;
       tTot[escolhida.id]++;
       hTot[escolhida.id] += turno.horas;
       nHot[escolhida.id] += calcHorasNoturnas(turno.horaInicio, turno.horas);
+      ultDia[escolhida.id] = dk;
     }
   });
 
   // ═══════════════════════════════════════════════════════════
-  // FASE 3: Otimização — equalização de horas noturnas
-  // Tenta transferir turnos noturnos da equipe mais carregada
-  // para a equipe menos carregada (se possível)
+  // FASE 3: Otimização de noturnas (200 iterações, threshold 2h)
   // ═══════════════════════════════════════════════════════════
   
-  let melhorou = true;
-  let iter = 0;
-  const MAX_ITER = 150;
-  
-  while (melhorou && iter < MAX_ITER) {
-    melhorou = false;
-    iter++;
-    
-    const stats = eqs.map(eq => ({ id: eq.id, n: nHot[eq.id] || 0, h: hTot[eq.id] || 0 }));
+  let melhorou = true, iter = 0;
+  while (melhorou && iter < 200) {
+    melhorou = false; iter++;
+    const stats = eqs.map(eq => ({ id: eq.id, n: nHot[eq.id] || 0 }));
     stats.sort((a, b) => b.n - a.n);
+    const mais = stats[0], menos = stats[stats.length - 1];
+    if (mais.n - menos.n <= 2) break;
     
-    const mais = stats[0];
-    const menos = stats[stats.length - 1];
-    
-    // Só otimiza se diferença for significativa (> 3h noturnas)
-    if (mais.n - menos.n <= 3) break;
-    
-    // Procura turno noturno da equipe mais carregada
     for (const dk of Object.keys(esc)) {
       const idx = esc[dk].findIndex(e => e.equipeId === mais.id);
       if (idx === -1) continue;
-      
       const turno = esc[dk][idx].turno;
       const notTurno = calcHorasNoturnas(turno.horaInicio, turno.horas);
-      
-      if (notTurno === 0) continue; // Só troca turnos noturnos
-      
-      // Verifica se equipe menos carregada pode assumir
+      if (notTurno === 0) continue;
       if (pode(menos.id, pd(dk), turno)) {
-        // Remove da equipe mais carregada
         esc[dk] = esc[dk].filter((_, i) => i !== idx);
-        
-        // Adiciona à equipe menos carregada
         esc[dk].push({ equipeId: menos.id, turno: { ...turno } });
-        
-        // Atualiza estatísticas
         const wk = iW(pd(dk));
         hSem[mais.id][wk] -= turno.horas;
         hSem[menos.id][wk] = (hSem[menos.id][wk] || 0) + turno.horas;
-        tTot[mais.id]--;
-        tTot[menos.id]++;
-        hTot[mais.id] -= turno.horas;
-        hTot[menos.id] += turno.horas;
-        nHot[mais.id] -= notTurno;
-        nHot[menos.id] += notTurno;
-        
-        melhorou = true;
-        break;
+        tTot[mais.id]--; tTot[menos.id]++;
+        hTot[mais.id] -= turno.horas; hTot[menos.id] += turno.horas;
+        nHot[mais.id] -= notTurno; nHot[menos.id] += notTurno;
+        melhorou = true; break;
       }
     }
   }
 
   // ═══════════════════════════════════════════════════════════
-  // FASE 4: Equalização final de horas totais
-  // Mantém equipes mais próximas possível da meta
+  // FASE 4: Equalização final
   // ═══════════════════════════════════════════════════════════
   
   const maxH = Math.max(...eqs.map(e => hTot[e.id] || 0));
-  let ch = true;
-  let it = 0;
-  
+  let ch = true, it = 0;
   while (ch && it < 50) {
-    ch = false;
-    it++;
-    
+    ch = false; it++;
     for (const eq of eqs) {
       if ((hTot[eq.id] || 0) >= maxH) continue;
-      
-      for (const dk of diasVal.map(fm)) {
+      for (const dia of diasVal) {
+        const dk = fm(dia);
         if ((esc[dk] || []).some(e => e.equipeId === eq.id)) continue;
         if ((hTot[eq.id] || 0) >= maxH) break;
-        
         const used = new Set((esc[dk] || []).map(e => e.turno.id));
-        
         for (const turno of tConf) {
           if (used.has(turno.id)) continue;
-          if (pode(eq.id, pd(dk), turno)) {
+          if (pode(eq.id, dia, turno)) {
             esc[dk] = [...(esc[dk] || []), { equipeId: eq.id, turno: { ...turno } }];
-            const wk = iW(pd(dk));
+            const wk = iW(dia);
             hSem[eq.id][wk] = (hSem[eq.id][wk] || 0) + turno.horas;
-            tTot[eq.id]++;
-            hTot[eq.id] += turno.horas;
+            tTot[eq.id]++; hTot[eq.id] += turno.horas;
             nHot[eq.id] += calcHorasNoturnas(turno.horaInicio, turno.horas);
-            ch = true;
-            break;
+            ultDia[eq.id] = dk;
+            ch = true; break;
           }
         }
       }
     }
   }
 
-  return {
-    escala: esc,
-    todosDias,
-    tConf,
-    diasVal: diasVal.map(fm),
-    deslI: fm(inicio),
-    deslF: fm(fim),
-    tTot,
-    hTot,
-    metaH,
-    diasUteis
-  };
+  return { escala: esc, todosDias, tConf, diasVal: diasVal.map(fm), deslI: fm(inicio), deslF: fm(fim), tTot, hTot, metaH, diasUteis };
 }
 
 function toSem(todos){if(!todos.length)return[];const r=[];let c=Array(7).fill(null);todos.forEach(d=>{c[d.getDay()]=d;if(d.getDay()===6){r.push(c);c=Array(7).fill(null);}});if(c.some(Boolean))r.push(c);if(r.length){const f=r[0],d0=todos[0];for(let i=0;i<d0.getDay();i++)if(!f[i])f[i]="e";const l=r[r.length-1],dN=todos[todos.length-1];for(let i=dN.getDay()+1;i<7;i++)if(!l[i])l[i]="e";}return r;}
