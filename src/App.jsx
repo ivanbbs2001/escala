@@ -48,21 +48,255 @@ function checkDescanso(escala,eqId,targetDk,turnoHI,hpT,descansoMin){
   for(let off=-2;off<=2;off++){if(off===0)continue;const adk=fm(aD(td,off));for(const e of(escala[adk]||[])){if(e.equipeId!==eqId)continue;const ad=pd(adk);const as2=new Date(ad);as2.setHours(Math.floor(e.turno.horaInicio),Math.round((e.turno.horaInicio%1)*60),0,0);const ae=new Date(as2.getTime()+e.turno.horas*36e5);const g1=(ts-ae)/36e5;const g2=(as2-te)/36e5;const g=Math.max(g1,g2);if(g>=0&&g<descansoMin)return false;}}return true;
 }
 
-function gerarEscala(eqs,dI,dF,hpT,fer,horaInicio,descansoMin){
-  const inicio=pd(dI),fim=pd(dF),total=dD(inicio,fim);
-  if(total<2)return{erro:"Período deve ter ao menos 3 dias."};if(eqs.length<1)return{erro:"Cadastre ao menos 1 equipe."};
-  const diasVal=[];for(let i=1;i<total;i++)diasVal.push(aD(inicio,i));
-  const todosDias=[];for(let i=0;i<=total;i++)todosDias.push(aD(inicio,i));
-  const diasUteis=diasVal.filter(d=>isUtil(d,fer)).length;const metaH=diasUteis*8;
-  const nT=Math.floor(24/hpT);const tConf=[];
-  for(let t=0;t<nT;t++){const h0=(horaInicio+t*hpT)%24;const h1=(h0+hpT)%24;tConf.push({id:`T${t+1}`,label:`Turno ${t+1}`,horario:`${fH(h0)}–${fH(h1)}`,horas:hpT,horaInicio:h0});}
-  const hSem={},tTot={},hTot={};eqs.forEach(eq=>{hSem[eq.id]={};tTot[eq.id]=0;hTot[eq.id]=0;});
-  const esc={};
-  const pode=(eqId,dia,turno)=>{const wk=iW(dia);if((hSem[eqId][wk]||0)+turno.horas>36)return false;if(hTot[eqId]+turno.horas>metaH+hpT)return false;return checkDescanso(esc,eqId,fm(dia),turno.horaInicio,hpT,descansoMin);};
-  diasVal.forEach(dia=>{const dk=fm(dia);esc[dk]=[];tConf.forEach(turno=>{const cands=[...eqs].sort((a,b)=>{const d=hTot[a.id]-hTot[b.id];if(Math.abs(d)>=hpT)return d;return tTot[a.id]-tTot[b.id];});for(const eq of cands){if(esc[dk].some(e=>e.equipeId===eq.id))continue;if(pode(eq.id,dia,turno)){esc[dk].push({equipeId:eq.id,turno:{...turno}});const wk=iW(dia);hSem[eq.id][wk]=(hSem[eq.id][wk]||0)+turno.horas;tTot[eq.id]++;hTot[eq.id]+=turno.horas;break;}}});});
-  const maxH=Math.max(...eqs.map(e=>hTot[e.id]));let ch=true,it=0;
-  while(ch&&it<50){ch=false;it++;for(const eq of eqs){if(hTot[eq.id]>=maxH)continue;for(const dk of diasVal.map(fm)){if(esc[dk].some(e=>e.equipeId===eq.id))continue;if(hTot[eq.id]>=maxH)break;const used=new Set(esc[dk].map(e=>e.turno.id));for(const turno of tConf){if(used.has(turno.id))continue;if(pode(eq.id,pd(dk),turno)){esc[dk].push({equipeId:eq.id,turno:{...turno}});const wk=iW(pd(dk));hSem[eq.id][wk]=(hSem[eq.id][wk]||0)+turno.horas;tTot[eq.id]++;hTot[eq.id]+=turno.horas;ch=true;break;}}}}}
-  return{escala:esc,todosDias,tConf,diasVal:diasVal.map(fm),deslI:fm(inicio),deslF:fm(fim),tTot,hTot,metaH,diasUteis};
+function gerarEscala(eqs, dI, dF, hpT, fer, horaInicio, descansoMin) {
+  const inicio = pd(dI), fim = pd(dF), total = dD(inicio, fim);
+  if (total < 2) return { erro: "Período deve ter ao menos 3 dias." };
+  if (eqs.length < 1) return { erro: "Cadastre ao menos 1 equipe." };
+
+  const diasVal = [];
+  for (let i = 1; i < total; i++) diasVal.push(aD(inicio, i));
+  const todosDias = [];
+  for (let i = 0; i <= total; i++) todosDias.push(aD(inicio, i));
+  
+  const diasUteis = diasVal.filter(d => isUtil(d, fer)).length;
+  const metaH = diasUteis * 8;
+  
+  const nT = Math.floor(24 / hpT);
+  const tConf = [];
+  for (let t = 0; t < nT; t++) {
+    const h0 = (horaInicio + t * hpT) % 24;
+    const h1 = (h0 + hpT) % 24;
+    tConf.push({ id: `T${t + 1}`, label: `Turno ${t + 1}`, horario: `${fH(h0)}–${fH(h1)}`, horas: hpT, horaInicio: h0 });
+  }
+
+  const hSem = {}, tTot = {}, hTot = {}, nHot = {};
+  eqs.forEach(eq => { hSem[eq.id] = {}; tTot[eq.id] = 0; hTot[eq.id] = 0; nHot[eq.id] = 0; });
+  
+  const esc = {};
+
+  // ── FUNÇÃO AUXILIAR: Score de balanceamento ─────────────────
+  // Quanto MENOR o score, melhor a equipe para o turno
+  function calcScore(eqId, turno) {
+    const h = hTot[eqId] || 0;
+    const n = nHot[eqId] || 0;
+    const noturnasTurno = calcHorasNoturnas(turno.horaInicio, turno.horas);
+    
+    // 1. Diferença de horas totais vs equipe com menos horas
+    const minH = Math.min(...eqs.map(e => hTot[e.id] || 0));
+    const diffH = h - minH;
+    
+    // 2. Diferença de horas noturnas vs equipe com menos noturnas (PESO 3x)
+    const minN = Math.min(...eqs.map(e => nHot[e.id] || 0));
+    const diffN = n - minN;
+    
+    // 3. Se o turno for noturno, penaliza equipes que já têm muitas noturnas
+    const penalNoturna = noturnasTurno > 0 ? (n * 2.5) : 0;
+    
+    // 4. Bônus para equipes abaixo da meta (incentiva distribuição)
+    const faltaMeta = Math.max(0, metaH - h);
+    const bonusMeta = faltaMeta > 0 ? -faltaMeta * 0.3 : 0;
+    
+    // Score final: quanto menor, melhor
+    return diffH + (diffN * 3) + penalNoturna + bonusMeta;
+  }
+
+  // ── FUNÇÃO AUXILIAR: Verifica se equipe pode trabalhar ─────
+  const pode = (eqId, dia, turno) => {
+    const wk = iW(dia);
+    if ((hSem[eqId][wk] || 0) + turno.horas > 36) return false;
+    if (hTot[eqId] + turno.horas > metaH + hpT) return false;
+    return checkDescanso(esc, eqId, fm(dia), turno.horaInicio, hpT, descansoMin);
+  };
+
+  // ═══════════════════════════════════════════════════════════
+  // FASE 1: Distribuição inicial — cobertura + balanceamento
+  // ═══════════════════════════════════════════════════════════
+  
+  // Ordena dias: primeiro dias de semana sem cobertura, depois sábados, domingos
+  const diasPriorizados = [...diasVal].sort((a, b) => {
+    const da = a.getDay(), db = b.getDay();
+    const ka = fm(a), kb = fm(b);
+    const va = !(esc[ka] && esc[ka].length > 0) && da >= 1 && da <= 5 ? 0 : 1;
+    const vb = !(esc[kb] && esc[kb].length > 0) && db >= 1 && db <= 5 ? 0 : 1;
+    return va - vb;
+  });
+
+  diasPriorizados.forEach(dia => {
+    const dk = fm(dia);
+    esc[dk] = [];
+    
+    tConf.forEach(turno => {
+      const disponiveis = eqs.filter(eq => {
+        if (esc[dk].some(e => e.equipeId === eq.id)) return false;
+        return pode(eq.id, dia, turno);
+      });
+      
+      if (disponiveis.length === 0) return;
+      
+      // Ordena por score (menor score = melhor balanceamento)
+      disponiveis.sort((a, b) => calcScore(a.id, turno) - calcScore(b.id, turno));
+      
+      const escolhida = disponiveis[0];
+      
+      esc[dk].push({ equipeId: escolhida.id, turno: { ...turno } });
+      const wk = iW(dia);
+      hSem[escolhida.id][wk] = (hSem[escolhida.id][wk] || 0) + turno.horas;
+      tTot[escolhida.id]++;
+      hTot[escolhida.id] += turno.horas;
+      nHot[escolhida.id] += calcHorasNoturnas(turno.horaInicio, turno.horas);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // FASE 2: Backfill — preenche dias completamente vazios
+  // ═══════════════════════════════════════════════════════════
+  
+  const diasVazios = diasVal.filter(d => {
+    const dk = fm(d);
+    return !(esc[dk] && esc[dk].length > 0);
+  });
+  
+  diasVazios.forEach(dia => {
+    const dk = fm(dia);
+    if (!esc[dk]) esc[dk] = [];
+    
+    for (const turno of tConf) {
+      const disponiveis = eqs.filter(eq => {
+        if (esc[dk].some(e => e.equipeId === eq.id)) return false;
+        return pode(eq.id, dia, turno);
+      });
+      
+      if (disponiveis.length === 0) continue;
+      
+      // Ordena: menos horas totais, depois menos noturnas
+      disponiveis.sort((a, b) => {
+        const diffH = (hTot[a.id] || 0) - (hTot[b.id] || 0);
+        if (Math.abs(diffH) >= hpT) return diffH;
+        const diffN = (nHot[a.id] || 0) - (nHot[b.id] || 0);
+        if (Math.abs(diffN) >= 2) return diffN;
+        return (tTot[a.id] || 0) - (tTot[b.id] || 0);
+      });
+      
+      const escolhida = disponiveis[0];
+      
+      esc[dk].push({ equipeId: escolhida.id, turno: { ...turno } });
+      const wk = iW(dia);
+      hSem[escolhida.id][wk] = (hSem[escolhida.id][wk] || 0) + turno.horas;
+      tTot[escolhida.id]++;
+      hTot[escolhida.id] += turno.horas;
+      nHot[escolhida.id] += calcHorasNoturnas(turno.horaInicio, turno.horas);
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════
+  // FASE 3: Otimização — equalização de horas noturnas
+  // Tenta transferir turnos noturnos da equipe mais carregada
+  // para a equipe menos carregada (se possível)
+  // ═══════════════════════════════════════════════════════════
+  
+  let melhorou = true;
+  let iter = 0;
+  const MAX_ITER = 150;
+  
+  while (melhorou && iter < MAX_ITER) {
+    melhorou = false;
+    iter++;
+    
+    const stats = eqs.map(eq => ({ id: eq.id, n: nHot[eq.id] || 0, h: hTot[eq.id] || 0 }));
+    stats.sort((a, b) => b.n - a.n);
+    
+    const mais = stats[0];
+    const menos = stats[stats.length - 1];
+    
+    // Só otimiza se diferença for significativa (> 3h noturnas)
+    if (mais.n - menos.n <= 3) break;
+    
+    // Procura turno noturno da equipe mais carregada
+    for (const dk of Object.keys(esc)) {
+      const idx = esc[dk].findIndex(e => e.equipeId === mais.id);
+      if (idx === -1) continue;
+      
+      const turno = esc[dk][idx].turno;
+      const notTurno = calcHorasNoturnas(turno.horaInicio, turno.horas);
+      
+      if (notTurno === 0) continue; // Só troca turnos noturnos
+      
+      // Verifica se equipe menos carregada pode assumir
+      if (pode(menos.id, pd(dk), turno)) {
+        // Remove da equipe mais carregada
+        esc[dk] = esc[dk].filter((_, i) => i !== idx);
+        
+        // Adiciona à equipe menos carregada
+        esc[dk].push({ equipeId: menos.id, turno: { ...turno } });
+        
+        // Atualiza estatísticas
+        const wk = iW(pd(dk));
+        hSem[mais.id][wk] -= turno.horas;
+        hSem[menos.id][wk] = (hSem[menos.id][wk] || 0) + turno.horas;
+        tTot[mais.id]--;
+        tTot[menos.id]++;
+        hTot[mais.id] -= turno.horas;
+        hTot[menos.id] += turno.horas;
+        nHot[mais.id] -= notTurno;
+        nHot[menos.id] += notTurno;
+        
+        melhorou = true;
+        break;
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // FASE 4: Equalização final de horas totais
+  // Mantém equipes mais próximas possível da meta
+  // ═══════════════════════════════════════════════════════════
+  
+  const maxH = Math.max(...eqs.map(e => hTot[e.id] || 0));
+  let ch = true;
+  let it = 0;
+  
+  while (ch && it < 50) {
+    ch = false;
+    it++;
+    
+    for (const eq of eqs) {
+      if ((hTot[eq.id] || 0) >= maxH) continue;
+      
+      for (const dk of diasVal.map(fm)) {
+        if ((esc[dk] || []).some(e => e.equipeId === eq.id)) continue;
+        if ((hTot[eq.id] || 0) >= maxH) break;
+        
+        const used = new Set((esc[dk] || []).map(e => e.turno.id));
+        
+        for (const turno of tConf) {
+          if (used.has(turno.id)) continue;
+          if (pode(eq.id, pd(dk), turno)) {
+            esc[dk] = [...(esc[dk] || []), { equipeId: eq.id, turno: { ...turno } }];
+            const wk = iW(pd(dk));
+            hSem[eq.id][wk] = (hSem[eq.id][wk] || 0) + turno.horas;
+            tTot[eq.id]++;
+            hTot[eq.id] += turno.horas;
+            nHot[eq.id] += calcHorasNoturnas(turno.horaInicio, turno.horas);
+            ch = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  return {
+    escala: esc,
+    todosDias,
+    tConf,
+    diasVal: diasVal.map(fm),
+    deslI: fm(inicio),
+    deslF: fm(fim),
+    tTot,
+    hTot,
+    metaH,
+    diasUteis
+  };
 }
 
 function toSem(todos){if(!todos.length)return[];const r=[];let c=Array(7).fill(null);todos.forEach(d=>{c[d.getDay()]=d;if(d.getDay()===6){r.push(c);c=Array(7).fill(null);}});if(c.some(Boolean))r.push(c);if(r.length){const f=r[0],d0=todos[0];for(let i=0;i<d0.getDay();i++)if(!f[i])f[i]="e";const l=r[r.length-1],dN=todos[todos.length-1];for(let i=dN.getDay()+1;i<7;i++)if(!l[i])l[i]="e";}return r;}
