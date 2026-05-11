@@ -565,7 +565,7 @@ export default function App(){
   return(<div style={{fontFamily:fontFam,background:C.bg,color:C.tx,minHeight:"100vh"}}>
     <div style={{background:C.hdr,borderBottom:`2px solid ${C.ac}`,padding:"14px 24px",display:"flex",alignItems:"center",gap:"14px",flexWrap:"wrap"}}>
       <div style={{fontSize:"22px",background:C.ac,color:"#000",width:"42px",height:"42px",borderRadius:"8px",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"900",flexShrink:0}}>E</div>
-      <div><div style={{fontSize:"18px",fontWeight:"700",color:"#f1f5f9"}}>Escala de Serviço</div><div style={{fontSize:"11px",color:"#64748b",marginTop:"1px"}}>v7 · PRF · PDF c/ Brasão</div></div>
+      <div><div style={{fontSize:"18px",fontWeight:"700",color:"#f1f5f9"}}>Escala de Serviço</div><div style={{fontSize:"11px",color:"#64748b",marginTop:"1px"}}>v8 · PRF · PDF c/ Brasão</div></div>
       <div style={{marginLeft:"auto",display:"flex",gap:"8px",alignItems:"center",flexWrap:"wrap"}}>
         <button onClick={()=>setTh(th==="dark"?"light":"dark")} style={{...sSm("transparent","#94a3b8"),border:"1px solid #334155",borderRadius:"20px",padding:"6px 14px",fontSize:"16px"}}>{th==="dark"?"☀️":"🌙"}</button>
         {dados&&<><button onClick={()=>gerarPDF(esc,eqs,dados,nomeOp,fer,font,servs)} style={{...sSm("#dc2626","#fff"),borderColor:"#dc2626",fontWeight:"700"}}>📄 PDF</button><button onClick={expJSON} style={sSm("transparent","#94a3b8")}>⬇ JSON</button></>}
